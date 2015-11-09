@@ -1,0 +1,46 @@
+Practical Machine Learning Project
+======
+```{r setoptions, echo=FALSE, message=FALSE}
+library("knitr")
+options(warn=-1)
+opts_chunk$set(echo=TRUE, results="asis")
+```
+##Author: Kevin
+
+##Project task (Question): 
+To build a machine learning algorithm to predict activity quality from activity monitors
+
+##Getting input data
+1. First we obtain data from this predictive analysis
+2. Create local fold "data" to store data and download data files (training set and test set)
+3. Load data sets into working space
+
+```{r cache=TRUE}
+if (!file.exists("data")) dir.create("data")
+setwd("data") ## ==  setwd("./data")
+
+setInternet2(use=T)
+
+fileUrl_trainingData<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+fileUrl_testData<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+download.file(fileUrl_trainingData, destfile="./trainingData.csv")
+download.file(fileUrl_testData, destfile="./testData.csv")
+
+list.files("./")
+dateDownloaded<-date()
+
+trainingDataSet<-read.csv("trainingData.csv")
+testDataSet<-read.csv("testData.csv")
+```
+
+##Identify features
+any or combination of variables/predictors, decide threshold, etc. 
+what is the definition of "good activity quality"?
+
+##Design algorithm
+use features and specific logic to make prediction 
+
+##Evaluation: Cross-validation & out-of-sample error estimate
+
+
