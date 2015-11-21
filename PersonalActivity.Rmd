@@ -2,45 +2,227 @@ Practical Machine Learning Project
 ======
 ```{r setoptions, echo=FALSE, message=FALSE}
 library("knitr")
+#.libPaths()
+library(caret)
 options(warn=-1)
 opts_chunk$set(echo=TRUE, results="asis")
 ```
 ##Author: Kevin
 
-##Project task (Question): 
-To build a machine learning algorithm to predict activity quality from activity monitors
+##Project task: 
+To build a machine learning algorithm to predict personal activity quality (how well) from activity monitors     
 
-##Getting input data
-1. First we obtain data from this predictive analysis
-2. Create local fold "data" to store data and download data files (training set and test set)
-3. Load data sets into working space
+##Get training and testing data sets
 
 ```{r cache=TRUE}
+#create working dir if not exist
 if (!file.exists("data")) dir.create("data")
 setwd("data") ## ==  setwd("./data")
 
+#download raw data
 setInternet2(use=T)
-
 fileUrl_trainingData<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
 fileUrl_testData<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
-
 download.file(fileUrl_trainingData, destfile="./trainingData.csv")
 download.file(fileUrl_testData, destfile="./testData.csv")
 
 list.files("./")
 dateDownloaded<-date()
 
-trainingDataSet<-read.csv("trainingData.csv")
-testDataSet<-read.csv("testData.csv")
+trainingSet<-read.csv("trainingData.csv")
+testingSet<-read.csv("testData.csv")
 ```
 
-##Identify features
-any or combination of variables/predictors, decide threshold, etc. 
-what is the definition of "good activity quality"?
 
-##Design algorithm
-use features and specific logic to make prediction 
+##Data cleaning
+For the same variables in interest, they are even of different types (factor vs. logical) in training/testing data, all are converted to numeric type before processing (except responsor: "classe"" variable)
+```{r cache=TRUE, results='asis'}
+dim(trainingSet)
+dim(testingSet)
+#show the first 15 variables in each set, where several varibles have two different types
+classTrain<-sapply(trainingSet[,1:15],class)
+classTest<-sapply(testingSet[,1:15],class)
+classTable<-cbind(classTrain,classTest)
+rownames(classTable)<-names(trainingSet[,1:15])
+knitr::kable(classTable)
 
-##Evaluation: Cross-validation & out-of-sample error estimate
+#convert all variables to numeric type except classe (keep as factor) in both training and testing sets
+classeInd<-grep("classe",names(trainingSet))
+classeInd
+problemInd<-grep("problem_id",names(testingSet))
+problemInd
+trainingSet[,-classeInd]<-data.frame(sapply(trainingSet[,-classeInd],as.numeric))
+testingSet[,-problemInd]<-data.frame(sapply(testingSet[,-problemInd],as.numeric))
+dim(trainingSet)
+dim(testingSet)
+```
+
+##Data exploration
+1. Let's first see how many variables related to all sensors, Eular angles and features
+
+```{r cache=TRUE}
+extract<-grep("accel|gyros|magnet|belt|arm|forearm|dumbbell|roll|pitch|yaw",names(trainingSet),value=T)
+length(extract)
+extract
+```
+
+2. It can be seen that `r length(extract)` variables could be candidates as predictors. Let's randomly select one variable, say "roll_belt" to see what's its relationshp with classe using plotting.
+
+```{r cache=TRUE}
+qplot(roll_belt,classe,data=trainingSet)
+qplot(roll_belt,classe,colour=pitch_belt, data=trainingSet)
+```
+
+From the plotting it looks for belt, roll and pitch variables can be used as predictors. 
+
+3. Let's also take a look at if any correlation between those accelerometer-on-belt related variables and classe
+
+```{r cache=TRUE}
+accelBeltInd<-grep("accel.+belt",names(trainingSet))
+length(accelBeltInd)
+names(trainingSet)[accelBeltInd]
+featurePlot(x=trainingSet[,c(accelBeltInd,classeInd)],y=trainingSet$classe,plot="pairs")
+```
+
+It can be seen the accelerometer-on-belt variables could also be considered as predictors 
+
+##Feature selection: 
+-1. As indicated in project b/g, "your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants." In the project instruction it also says that "You may use any of the other variables to predict with."  
+  --1.1 Initially I used all data related to only accelerometers on the belt, forearm, arm and dumbbell, which gives me >94% prediction accuracy.       
+  --1.2 I do find if I used more variables in my model, that is, all data related to Eular Angles (roll,pitch,yaw) and all three sensors (accelerometers,gyros- and magnetometers) on the belt, forearm, arm and dumbbell, the model can achieve even higher prediction accuracy (>99%) see below. Thus in this project I will see which out of those `r length(extract)` variables I can use as predictors for building up my model.      
+
+```{r cache=TRUE}
+#extract all data from eular angels (roll, pitch, yaw) and sensors (accelerameters, gyros and magnetometers) on the belt, forearm, arm and dumbbell
+
+extract<-grep("roll|pitch|yaw|accel|gyros|magnet|belt|arm|forearm|dumbbell",names(trainingSet))
+#extract all data from accelerameters on the belt, forearm, arm and dumbbell
+#extract<-grep("(accel.+belt)|(accel.+arm)|(accel.+forearm)|(accel.+dumbbell)",names(trainingSet))
+length(extract)
+
+training<-trainingSet[,c(extract,classeInd)]
+dim(training)
+testing<-testingSet[,c(extract,problemInd)]
+dim(testing)
+```
+
+Here We found `r length(extract)` predictors
+
+2. All NZV(Near Zero Variance) variables should be removed from the data as predictors. 
+
+```{r cache=TRUE, results='asis'}
+#find and show all those NZV variables in training/testing sets
+nsvTraining<-nearZeroVar(training[,-dim(training)[2]],saveMetrics=TRUE)
+nsvTesting<-nearZeroVar(testing[,-dim(testing)[2]],saveMetrics=TRUE)
+nzvTable<-data.frame(nsvTraining$percentUnique,as.logical(nsvTraining$nzv),nsvTesting$percentUnique,as.logical(nsvTesting$nzv))
+rownames(nzvTable)<-names(training[,-dim(training)[2]])
+colnames(nzvTable)<-c("%Unique_Training","NZV_Training", "%Unique_Testing","NZV_Testing")
+knitr::kable(nzvTable)
+
+#find index of those NZV variables in data and remove them 
+nzvIndTraining<-which(nsvTraining$nzv)
+nzvIndTesting<-which(nsvTesting$nzv)
+nzvInd<-c(nzvIndTraining,nzvIndTesting)
+#Number and index of those NZV variables in training set
+length(nzvIndTraining)
+nzvIndTraining
+#Number and index of those NZV variables in testing set
+length(nzvIndTesting)
+nzvIndTesting
+#Before removing NZV, we have following variables:
+length(extract)
+#After removing NZV, we have following variables left as predictors:
+extract<-extract[-nzvInd]
+length(extract)
+extract
+```
+
+In training set we found `r length(nzvIndTraining)` NZV variables, and in testing set we found `r length(nzvIndTesting)` NZV variables. After removing all those NZV variables, we got `r length(extract)` predictors
+
+3. Get the updated data sets after NZV removal
+```{r cache=TRUE}
+#extract all data from accelerameters on the belt, forearm, arm and dumbbell
+training<-trainingSet[,c(extract,classeInd)]
+dim(training)
+testing<-testingSet[,c(extract,problemInd)]
+dim(testing)
+```
+
+###At last, we decided to use following `r length(extract)` variables as predictors for model fitting:       
+`r names(training[-dim(training)[2]])`     
+
+##Fit model using random forest     
+Here we use the training set ONLY for building up the prediction model.       
+Note: The testing set is only used for verifying model performance as well as here help filter out those NZV variables as predictors (i.e. all NZV variables should be thrown out of the model. If they were by mistake used as principal components for prediction, the model won't work for the testing set at all). 
+
+```{r cache=TRUE, results='asis'}
+#modFit<-train(classe~.,method="rf", data=training)
+#trainControl method = "cv", "LOOCV", "oob"
+#modFit<-train(classe~.,method="rf", preProcess=c("pca","center","scale","knnImpute"), trControl=trainControl(method ="cv"), data=training)
+modFit<-train(classe~.,method="rf", trControl=trainControl(method ="cv"), data=training)
+#modFit<-train(classe~.,method="rf", data=training)
+modFit
+finMod<-modFit$finalModel
+finMod
+```
+
+#Cross validation and out-of-sample errors
+We probably do not need do a separate cross-validation procedure due to following reasons:     
+-1.	The training set is a big data set (>19000 records), whereas cross validation is more meaningful for a small data set.       
+-2.	More importantly, there is no need for cross validation or an independent testing set for Random Forest to obtain an unbiased estimate of the out-of-sample error. It has already been estimated internally during the run. Although I explicitly specify trControl=trainControl(method ="cv") calling for the Cross Validation function here, it is optional (10 fold CV).      
+-3.	In particular, predict.randomForest returns the out-of-bag prediction if newdata is not given.     
+-4.	Out-of-sample error: the error estimate can be found from the OOB (Out-Of-Bag) estimate of error rate above.   
+
+Following tables shows importance ranking of each Principle Component (PC) in the model (accuracy and GINI misclarification rate):     
+```{r cache=T, results='asis'}
+#show rf variable importance
+#varImp(modFit)
+print(varImp(modFit))
+
+Var_Importance = randomForest(classe~., data =training, importance =TRUE, do.trace = 100)
+#var_Importance<-randomForest(classe~., data =training, importance =TRUE, do.trace = 100)
+varImpPlot(Var_Importance)
+```
 
 
+#Applying the prediction model to the testing set for results
+
+```{r cache=TRUE}
+predictions<-predict(modFit, newdata=training)
+head(predictions,20)
+
+predictions<-predict(modFit, newdata=trainingSet)
+head(predictions,20)
+
+prediction2<-predict(modFit, newdata=testing)
+prediction2
+
+prediction2<-predict(modFit, newdata=testingSet)
+prediction2
+
+#write the answers into the files for scoring
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+answers<-prediction2
+pml_write_files(answers)
+```
+
+
+##Conclusions
+1. Random forest does prove to be one of the most accurate and automated ML methods for prediction      
+
+2. Using data from all sensors on belt,forearm,arm and dumbbell, our model can achieve >99% accuracy with <0.5% OOB error rate. Despite the result is a bit hard to explain since many predictors (`r length(extract)`) are used.                 
+
+3. Garbge in, Garge out. Raw data is more important than algorithm, the more the merier. During the experiment, using the exactly same algorithm, I found when using less and less data for training set, the accuracy become worse and worse correspondently.     
+
+4. Data cleaning, preprocessing and quick data exploration will greatly ease the predictive analysis work afterwards. Also during data processing the time sequence relationship between data should be preserved as data is related to a consecutive set of personal movements in a series of observation windows              
+
+5. Feature selection calls for domain expert knowledge. Corrleation-based feature selection is worth further study after this project             
+
+##Acknowledgement 
+All data for this project come from this source: http://groupware.les.inf.puc-rio.br/har.      
+Thanks the Quantified Self Movement group for their generosity in making those data accessible for public use and research study              
